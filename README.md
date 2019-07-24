@@ -1,6 +1,8 @@
 # OBS - muteable scenes
 
-This is a little Javascript that allows you to have all audio devices muted automatically by having a specially named source in your scene. This script requires you to have the OBS plugin [obs-websocket](https://github.com/Palakis/obs-websocket/releases) with at least version 4.6 to be installed. 
+This is a little Javascript that allows you to have all audio devices muted automatically by having a specially named source in your scene.
+
+**Note: This script requires you to have the OBS plugin [obs-websocket](https://github.com/Palakis/obs-websocket/releases) (with at least version 4.6) installed** 
 
 ### Installation
 
