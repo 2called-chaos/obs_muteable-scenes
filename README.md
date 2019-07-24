@@ -6,7 +6,7 @@ This is a little Javascript that allows you to have all audio devices muted auto
 
 ### Installation
 
-1. [Download the zip] and extract it somewhere "permanent"
+1. [Download the zip](https://github.com/2called-chaos/obs_muteable-scenes/archive/master.zip) and extract it somewhere "permanent"
 2. Add the index.html as a browser source to one of your scenes. You probably want to set the height & width to 1/1 as you are actually able to open this in your browser and have totally (not) fancy volume controls. Just make sure to not check "Shutdown source when not visible".
 3. If you choose to set a password for obs-websocket (which you should) you will get a prompt. You will only have to enter the password once (it's being stored in local storage), just be aware it will be visible while you type it in.
 
