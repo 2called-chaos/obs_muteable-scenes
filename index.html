@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>OBS muteable scenes</title>
+  <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-GJzZqFGwb1QTTN6wy59ffF1BuGJpLSa9DkKMp0DgiMDm4iYMj70gZWKYbI706tWS" crossorigin="anonymous">
+  <link href="https://stackpath.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" integrity="sha384-wvfXpqpZZVQGK6TAh5PVlGOfQNHSoD2xbE+QkPxCAFlNEevoEH3Sl0sibVcOQVnN" crossorigin="anonymous">
+  <script
+  src="https://code.jquery.com/jquery-3.4.1.min.js"
+  integrity="sha256-CSXorXvZcTkaix6Yvo6HppcZGetbYMGWSFlBw8HfCJo="
+  crossorigin="anonymous"></script>
+  <script src="./obs-websocket.js"></script>
+  <style type="text/css">
+    body { background: #222; color: #eee; margin: 5px 8px; }
+    #audioDevices { line-height: 30px; }
+    #audioDevices input { position: relative; top: 5px; }
+  </style>
+  <script type="text/javascript">
+    window.appConfig = {
+      address: 'localhost:4444',
+      password: localStorage.getItem('obsmute_password'),
+      onScene: {
+        // "THX": (app) => {
+        //   alert(1)
+        // },
+        // "AFK/BRB": (app) => {
+        //   app.muteAll()
+        // },
+      }
+    };
+
+    class Application {
+      constructor(config) {
+        this.config = config;
+      }
+
+      dispatch() {
+        try {
+          var x;
+          if(x = localStorage.getItem('obsmute_savestate'))
+            this.savedState = JSON.parse(x)
+        } catch (e) {
+          console.error(e)
+        }
+        this.connect()
+      }
+
+      async connect() {
+        $("#error").html("");
+        $("#status").html('<i class="fa fa-chain-broken text-warning"> connecting</i>');
+        this.obs = new OBSWebSocket();
+        this.obsState = "disconnected";
+        this.obs.on("error", this.onError.bind(this));
+        this.obs.on("SourceCreated", this.buildAudioDeviceList.bind(this));
+        this.obs.on("ConnectionOpened", this.onConnectionOpened.bind(this));
+        this.obs.on("ConnectionClosed", this.onConnectionClosed.bind(this));
+        this.obs.on("AuthenticationSuccess", this.onAuthenticationSuccess.bind(this));
+        this.obs.on("AuthenticationFailure", this.onAuthenticationFailure.bind(this));
+        this.obs.on("SourceVolumeChanged", this.onSourceVolumeChanged.bind(this));
+        this.obs.on("SourceMuteStateChanged", this.onSourceMuteStateChanged.bind(this));
+        this.obs.on("SwitchScenes", this.onSwitchScenes.bind(this));
+        try {
+          await this.obs.connect({ address: appConfig.address, password: appConfig.password });
+        } catch(e) {
+          console.error(e)
+          $("#error").html(e.status.toUpperCase() + ": " + e.error)
+        }
+      }
+      
+      onDebug(arg) {
+        console.log('DEBUG:', arg);
+      }
+
+      onError(err) {
+        console.error('socket error:', err);
+      }
+
+      onConnectionOpened() {
+        this.obsState = "connected";
+        $("#scene").show();
+        $("#status").html('<i class="fa fa-link text-success"> CONNECTED</i>');
+      }
+
+      onConnectionClosed() {
+        this.obsState = "disconnected";
+        $("#status").html('<i class="fa fa-chain-broken text-danger"> disconnected</i> <a href="javascript:window.location.reload();false">reload</a>');
+        $("#scene").html("");
+        $("#audioDevices").html("");
+      }
+
+      onSourceVolumeChanged(p) {
+        if (!this.audioDevices[p.sourceName]) return;
+        this.audioDevices[p.sourceName].updateVolume(p.volume);
+      }
+
+      onSourceMuteStateChanged(p) {
+        if (!this.audioDevices[p.sourceName]) return;
+        this.audioDevices[p.sourceName].updateMuted(p.muted);
+      }
+
+      async onSwitchScenes(p) {
+        await this.updateActiveScene(p);
+      }
+
+      async onAuthenticationFailure() {
+        var x = prompt("OBS-mute: obs-websocket requires a password, enter it here (and we save it in local storage for the future) but be aware it will be visible in the text field:")
+        if (x) {
+          localStorage.setItem('obsmute_password', x)
+          window.location.reload()
+        } else {
+          alert("OBS-mute will not function, you will get asked again the next time you start OBS.")
+        }
+      }
+
+      async onAuthenticationSuccess() {
+        await this.buildAudioDeviceList();
+        this.updateActiveScene(await this.wsGetCurrentScene(), true);
+      }
+
+      async wsGetCurrentScene() {
+        return (await this.obs.send("GetCurrentScene"))
+      }
+
+      async wsGetSourcesList() {
+        return (await this.obs.send("GetSourcesList")).sources
+      }
+
+      async buildAudioDeviceList() {
+        this.audioDevices = {}
+        var slist = await this.wsGetSourcesList();
+        for(const e of slist) {
+          if(e.typeId == "wasapi_input_capture" || e.typeId == "wasapi_output_capture")
+            await (this.audioDevices[e.name] = this.audioDevices[e.name] || new AudioDevice(this, e, e.typeId == "wasapi_input_capture", true));
+        }
+      }
+
+      async restoreSavestate() {
+        if (!this.savedState) return;
+        for(const e of this.savedState) {
+          if(this.audioDevices[e[0]]) {
+            await this.audioDevices[e[0]].setMute(e[2], true)
+            //await this.audioDevices[e[0]].setVolume(e[1])
+          }
+        }
+        this.savedState = null;
+        localStorage.removeItem('obsmute_savestate');
+      }
+
+      createSavestate() {
+        this.savedState = []
+        Object.values(this.audioDevices).forEach(dev => {
+          this.savedState.push([dev.data.name, dev.data.volume, dev.data.muted])
+        });
+        localStorage.setItem('obsmute_savestate', JSON.stringify(this.savedState));
+      }
+
+      muteAll(save = true) {
+        if(save) this.createSavestate();
+        Object.values(this.audioDevices).forEach(dev => { dev.setMute(true) });
+      }
+
+      async updateActiveScene(scene, initial = false) {
+        $("#activeScene").html(scene.name || scene.sceneName);
+        await this.restoreSavestate();
+        var f;
+        if (f = this.config.onScene[scene]) f(this);
+        scene.sources.forEach(s => {
+          if (s.name == "muted_scene" || s.name == "mute_scene") {
+            this.muteAll();
+            return;
+          }
+        });
+      }
+    }
+
+    class AudioDevice {
+      constructor(app, data, isInput = false, update = false) {
+        this.app = app;
+        this.data = data;
+        this.isInput = isInput;
+        this.buildDom();
+        this.render(update);
+        this.promises = {};
+      }
+
+      async render(update=false) {
+        data = {}
+        if(update) {
+          var data = await this.app.obs.send("GetVolume", { source: this.data.name });
+        }
+
+        this.updateVolume(data.volume);
+        this.updateMuted(data.muted);
+      }
+
+      send(meth, args = {}) {
+        var x = Object.assign({}, { source: this.data.name }, args);
+        this.app.obs.send(meth, x)
+      }
+
+      async setMute(value, awaitResponse = false) {
+        this.send("SetMute", { mute: value })
+        if (awaitResponse) {
+          var r = null;
+          var p = new Promise((resolve, reject) => { r = resolve })
+          this.promises["mute:"+this.name] = r
+          await p
+        }
+      }
+
+      async setVolume(value, awaitResponse = false) {
+        this.send("SetVolume", { volume: parseFloat(value) })
+        if (awaitResponse) {
+          var r = null;
+          var p = new Promise((resolve, reject) => { r = resolve })
+          this.promises["volume:"+this.name] = r
+          await p
+        }
+      }
+
+      buildDom() {
+        if($('#audioDevices div[data-name="'+this.data.name+'"]').length)
+          return
+
+        var icon = $('<i style="cursor: pointer" class="fa fa-fw fa-question-circle mute_'+(this.isInput ? "i" : "o")+'"></i>')
+        var slider = $('<input type="range" min="0" max="1" step="0.01" value="0">')
+
+        icon.click((ev => {
+          this.setMute(!this.data.muted)
+          return false
+        }).bind(this))
+
+        slider.change((ev => {
+          this.setVolume($(ev.target).val())
+          return false
+        }).bind(this))
+
+        this.dom = $('<div></div>')
+        this.dom.attr("data-name", this.data.name)
+        this.dom.append(icon)
+        this.dom.append(slider)
+        this.dom.append($('<span class="name"></span>').html(" " + this.data.name))
+        $("#audioDevices").append(this.dom);
+      }
+
+      updateMuted(set = null) {
+        if(set != null && set != undefined) this.data.muted = set
+        if (this.promises["mute:"+this.name]) { this.promises["mute:"+this.name]() }
+        this.dom.find(".mute_o")
+          .removeClass("fa-question-circle")
+          .toggleClass("fa-volume-off", this.data.muted)
+          .toggleClass("text-danger", this.data.muted)
+          .toggleClass("fa-volume-up", !this.data.muted)
+          .toggleClass("text-success", !this.data.muted);
+        this.dom.find(".mute_i")
+          .removeClass("fa-question-circle")
+          .toggleClass("fa-microphone-slash", this.data.muted)
+          .toggleClass("text-danger", this.data.muted)
+          .toggleClass("fa-microphone", !this.data.muted)
+          .toggleClass("text-success", !this.data.muted);
+      }
+
+      updateVolume(set = null) {
+        if(set != null && set != undefined) this.data.volume = set
+        if (this.promises["volume:"+this.name]) { this.promises["mute:"+this.name]() }
+        this.dom.find("input").val(this.data.volume)
+      }
+    }    
+
+    $(function() {
+      window.app = new Application(appConfig);
+      app.dispatch();
+     })
+  </script>
+</head>
+<body>
+  <div id="status">uninitialized</div>
+  <div id="error" class="text-danger"></div>
+  <div id="scene" style="display: none"><span class="text-info">active scene:</span> <span id="activeScene"></span></div>
+  <div id="audioDevices"></div>
+</body>
+</html>
